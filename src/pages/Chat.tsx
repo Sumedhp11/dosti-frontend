@@ -3,19 +3,21 @@ import { getAllMessages } from "@/APIS/MessageAPI";
 import AppLayout from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { NEW_MESSAGE } from "@/constants/constant";
-import { useSocketEvents } from "@/hooks/hooks";
 import { UserDataInterface } from "@/interfaces/userInterfaces";
-import { useSocket } from "@/lib/socketProvider";
+import { RootState } from "@/redux/store";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { IoMdArrowRoundBack } from "react-icons/io";
-import { useInView } from "react-intersection-observer";
+import { useDispatch, useSelector } from "react-redux";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { chatInterface } from "./Messages";
-import { useDispatch, useSelector } from "react-redux";
+import { useInfiniteScrollTop } from "6pp";
+import { NEW_MESSAGE } from "@/constants/constant";
+import { useSocket } from "@/lib/socketProvider";
 import { clearMessageNotifications } from "@/redux/slices/messageAlertSlice";
-import { RootState } from "@/redux/store";
+import MessageComponent from "@/components/MessageComponent";
+import Loader from "@/components/ui/Loader";
+import { useSocketEvents } from "@/hooks/hooks";
 
 export interface messageInterface {
   chat: string;
@@ -27,54 +29,39 @@ export interface messageInterface {
 }
 
 const Chat = ({ user }: { user: UserDataInterface }) => {
-  const params = useParams();
-  const { chatId } = params;
-  const navigate = useNavigate();
-  const location = useLocation();
-  const { ref, inView } = useInView();
-  const chat: chatInterface = location.state;
-  const [message, setMessage] = useState<string>("");
-  const [allMessages, setAllMessages] = useState<messageInterface[]>([]);
-  const socket = useSocket();
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const scrollableDivRef = useRef<HTMLDivElement>(null);
-  const memberIds = chat.members.map(({ _id }: { _id: string }) => _id);
-  const [page, setPage] = useState<number>(1);
-  const queryClient = useQueryClient();
   const dispatch = useDispatch();
+  const { chatId } = useParams<{ chatId: string }>();
+  const location = useLocation();
+  const chat: chatInterface = location.state;
+  const socket = useSocket();
+  const navigate = useNavigate();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [page, setPage] = useState(1);
+  const [message, setMessage] = useState("");
+  const [messages, setMessages] = useState<messageInterface[]>([]);
   const onlineUsers = useSelector(
     (state: RootState) => state.messageAlert.onlineUsers
   );
+  const otherMember = chat.members.find((member) => member?._id !== user?._id);
+  const isOnline = onlineUsers.includes(otherMember?._id || "");
+  const memberIds = chat.members.map(({ _id }) => _id);
+  const queryClient = useQueryClient();
+  let allMessages;
 
-  const NewMessagehandler = useCallback(
-    (data: { message: messageInterface }) => {
-      setAllMessages((prevMessages) => [...prevMessages, data.message]);
-    },
-    []
-  );
-
-  const eventHandlers = {
-    [NEW_MESSAGE]: (data: { message: messageInterface }) =>
-      NewMessagehandler(data),
-  };
-
-  useSocketEvents(socket, eventHandlers);
-
-  const {
-    data: messagesData,
-    isLoading,
-    isSuccess,
-  } = useQuery({
-    refetchOnWindowFocus: false,
+  const { data: oldMessagesChunk, isLoading } = useQuery({
     queryKey: ["messages", chatId, page],
     queryFn: () => getAllMessages(chatId!, page),
+    staleTime: 0,
   });
 
-  useEffect(() => {
-    if (isSuccess) {
-      setAllMessages((prev) => [...messagesData.data.messages, ...prev]);
-    }
-  }, [isSuccess, messagesData]);
+  const { data: oldMessages, setData } = useInfiniteScrollTop(
+    containerRef,
+    oldMessagesChunk?.data?.totalPages || 1,
+    page,
+    setPage,
+    oldMessagesChunk?.data?.messages || []
+  );
 
   const submitHandler = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -84,35 +71,41 @@ const Chat = ({ user }: { user: UserDataInterface }) => {
   };
 
   useEffect(() => {
-    if (messagesEndRef.current && scrollableDivRef.current) {
-      scrollableDivRef.current.scrollTop =
-        scrollableDivRef.current.scrollHeight;
-    }
-  }, [allMessages]);
-
-  useEffect(() => {
-    if (inView && messagesData?.data?.totalPages > page) {
-      setPage((prev) => prev + 1);
-    }
-  }, [inView, messagesData, page]);
-
-  const otherMember = chat.members.filter(
-    (member) => member?._id !== user?._id
-  );
-  useEffect(() => {
     dispatch(clearMessageNotifications(chatId!));
+
     return () => {
-      setAllMessages([]);
+      setMessages([]);
+      setMessage("");
+      setData([]);
+      setPage(1);
+      allMessages = [];
       queryClient.invalidateQueries({ queryKey: ["messages"] });
     };
-  }, [queryClient, dispatch, chatId]);
-  const onlineuser = onlineUsers.find(
-    (userId) => userId === otherMember[0]._id
+  }, [chatId, dispatch, setData, queryClient]);
+
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages]);
+
+  const newMessagesListener = useCallback(
+    (data: { chatId: string; message: messageInterface }) => {
+      if (data.chatId !== chatId) return;
+      setMessages((prev) => [...prev, data.message]);
+    },
+    [chatId]
   );
-  return isLoading ? (
-    <p>Loading messages</p>
-  ) : (
-    <div className="w-full h-full flex flex-col ">
+  const eventHandler = {
+    [NEW_MESSAGE]: newMessagesListener,
+  };
+
+  useSocketEvents(socket, eventHandler);
+
+  allMessages = [...oldMessages, ...messages];
+
+  return (
+    <div className="w-full h-full flex flex-col">
       <div className="flex items-center gap-4 px-3 py-2 shadow-sm shadow-black">
         <IoMdArrowRoundBack
           onClick={() => navigate("/messages")}
@@ -125,15 +118,15 @@ const Chat = ({ user }: { user: UserDataInterface }) => {
             src={
               chat.members.length > 2
                 ? "https://imgs.search.brave.com/GUsUCWPmz9Di0UvG8drnKf7MLiCj_xu8eOmt2zDR-KY/rs:fit:860:0:0/g:ce/aHR0cHM6Ly90NC5m/dGNkbi5uZXQvanBn/LzAxLzI3LzE1Lzg5/LzM2MF9GXzEyNzE1/ODkzM19jRFpBNHN1/TVhzeDJuMExRMDNG/enBYNTBSN2ZCYVV4/Mi5qcGc"
-                : import.meta.env.VITE_CLOUDINARY_URL + otherMember[0]?.avatar
+                : import.meta.env.VITE_CLOUDINARY_URL + otherMember?.avatar
             }
             alt=""
           />
           <div>
-            <p className="text-lg font-medium ">
-              {chat.members.length > 2 ? chat.name : otherMember[0].username}
+            <p className="text-lg font-medium">
+              {chat.members.length > 2 ? chat.name : otherMember?.username}
             </p>
-            {onlineuser && (
+            {isOnline && (
               <div className="text-green-700 font-medium text-sm">Online</div>
             )}
           </div>
@@ -141,39 +134,20 @@ const Chat = ({ user }: { user: UserDataInterface }) => {
       </div>
       <div className="w-full flex-grow">
         <div
-          ref={scrollableDivRef}
           className="w-full overflow-y-auto space-y-5 h-[calc(100vh-280px)] flex flex-col px-3 py-1"
+          ref={containerRef}
         >
-          <div ref={ref}></div>
-          {allMessages.length === 0 ? (
+          {isLoading ? (
+            <Loader />
+          ) : allMessages.length === 0 ? (
             <p className="text-lg font-medium text-center">
-              You Dont Have Any Messages Yet!
+              You don't have any messages yet!
             </p>
           ) : (
-            allMessages?.map((message) => {
-              const sameSender = message.sender._id === user._id;
-
+            allMessages.map((msg: messageInterface) => {
+              const isSender = msg.sender._id === user?._id;
               return (
-                <div
-                  key={message._id}
-                  className={`${
-                    sameSender ? "self-end" : "self-start"
-                  } bg-[#987070] text-white rounded-md p-2 w-fit `}
-                >
-                  {!sameSender && (
-                    <p className="text-yellow-300 font-semibold">
-                      {message.sender.username}
-                    </p>
-                  )}
-                  <p className="text-md font-medium">{message.content}</p>
-                  <p className="text-xs font-normal">
-                    {new Date(message.createdAt).getHours()}:
-                    {new Date(message.createdAt)
-                      .getMinutes()
-                      .toString()
-                      .padStart(2, "0")}
-                  </p>
-                </div>
+                <MessageComponent key={msg._id} isSender={isSender} msg={msg} />
               );
             })
           )}
@@ -200,4 +174,5 @@ const Chat = ({ user }: { user: UserDataInterface }) => {
     </div>
   );
 };
+
 export default AppLayout(Chat);

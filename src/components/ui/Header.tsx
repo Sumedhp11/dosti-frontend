@@ -44,13 +44,14 @@ const Header = () => {
   };
   return (
     <div className="w-full flex justify-between items-center   bg-[#987070] py-2 px-3">
-      <div>
+      <div className="flex items-center gap-3">
         <img
           src={logo}
           alt=""
           className="w-24 h-24 object-cover rounded-full"
           onClick={() => navigate("/")}
         />
+        <h1 className="text-2xl font-medium text-white">Dosti</h1>
       </div>
       <div className="flex items-center gap-4">
         <div>

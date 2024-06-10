@@ -4,7 +4,7 @@ import { Navigate } from "react-router-dom";
 const AuthProvider = ({ children }: { children: ReactNode }) => {
   const isLoggedIn = sessionStorage.getItem("isLoggedIn");
 
-  if (isLoggedIn === "false" || isLoggedIn === null) {
+  if (!isLoggedIn || isLoggedIn === "false") {
     return <Navigate to="/login" />;
   }
 
