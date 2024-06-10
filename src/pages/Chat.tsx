@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 /* eslint-disable react-refresh/only-export-components */
 import { getAllMessages } from "@/APIS/MessageAPI";
 import AppLayout from "@/components/layout/AppLayout";
@@ -102,7 +103,7 @@ const Chat = ({ user }: { user: UserDataInterface }) => {
 
   useSocketEvents(socket, eventHandler);
 
-  allMessages = [...oldMessages, ...messages];
+  allMessages = [...oldMessages, ...messages] as messageInterface[];
 
   return (
     <div className="w-full h-full flex flex-col">
